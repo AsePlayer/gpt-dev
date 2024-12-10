@@ -3,18 +3,16 @@ from torch.nn import functional as F
 from models.bigramLanguageModel import BigramLanguageModel
 
 # hyperparameters
-batch_size = 16 # how many independent sequences will we process in parallel?
-block_size = 32 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 100
-learning_rate = 1e-3
+batch_size = 32  # how many independent sequences will we process in parallel?
+block_size = 8   # what is the maximum context length for predictions?
+max_iters = 3000
+eval_interval = 300
+learning_rate = 1e-2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
-n_embd = 64
-n_head = 4
-n_layer = 4
-dropout = 0.0
 # ------------
+
+torch.manual_seed(1337)
 
 '''Step 1: Read the data'''
 # Open the file 'input.txt' and read its content into a variable called `text`.
@@ -48,21 +46,41 @@ itos = {i: ch for i, ch in enumerate(chars)}  # itos = index to string
 encode = lambda s: [stoi[c] for c in s]  # Turns "hello" into [7, 4, 11, 11, 14]
 decode = lambda l: ''.join([itos[i] for i in l])  # Turns [7, 4, 11, 11, 14] back into "hello"
 
-# Test the encode and decode functions.
-print(encode("hii there"))  # Should print numbers
-print(decode(encode("hii there")))  # Should print "hii there"
-
-'''Step 4: Convert the entire dataset into numbers'''
+'''Step 4: Train and test splits'''
 # Encode the whole text as a list of numbers, then turn it into a PyTorch tensor.
 data = torch.tensor(encode(text), dtype=torch.long)
-print(data.shape, data.dtype)  # Print the shape (size) of the dataset and its data type.
-print(data[:1000])  # Print the first 1000 numbers of the encoded dataset.
 
-'''Step 5: Split the dataset'''
 # Split the data into training and validation sets (90% training, 10% validation).
 n = int(0.9 * len(data))
 train_data = data[:n]
 val_data = data[n:]
+
+# Data loading
+# Function to generate a batch of data.
+def get_batch(split):
+    # Choose the data: training or validation.
+    data = train_data if split == 'train' else val_data
+    # Randomly pick starting points for `batch_size` sequences.
+    ix = torch.randint(len(data) - block_size, (batch_size,))
+    # Create inputs (x) and targets (y) from those starting points.
+    x = torch.stack([data[i:i + block_size] for i in ix])
+    y = torch.stack([data[i + 1:i + block_size + 1] for i in ix])
+    x, y = x.to(device), y.to(device)
+    return x, y
+
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    model.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
 
 # Define the maximum context length (how much text the model sees before making a prediction).
 block_size = 8
@@ -88,16 +106,7 @@ batch_size = 4  # How many sequences we process at once.
 block_size = 8  # Maximum length of input for each sequence.
 
 
-# Function to generate a batch of data.
-def get_batch(split):
-    # Choose the data: training or validation.
-    data = train_data if split == 'train' else val_data
-    # Randomly pick starting points for `batch_size` sequences.
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    # Create inputs (x) and targets (y) from those starting points.
-    x = torch.stack([data[i:i + block_size] for i in ix])
-    y = torch.stack([data[i + 1:i + block_size + 1] for i in ix])
-    return x, y
+
 
 
 # Generate a batch of training data.
@@ -121,7 +130,9 @@ print('----\n')
 
 '''Step 8: Use the model'''
 # Create a Bigram Language Model with the vocabulary size.
-m = BigramLanguageModel(vocab_size)
+model = BigramLanguageModel(vocab_size)
+m = model.to(device)
+
 
 # Run the model on a batch of inputs and targets to get predictions and loss.
 logits, loss = m(xb, yb)
@@ -135,17 +146,21 @@ print(decode(m.generate(idx=torch.zeros((1, 1), dtype=torch.long), max_new_token
 '''Step 10: Create Optimizer'''
 optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
 
-batch_size = 32
-for steps in range(10000):
-    # sample a batch of data
+for iter in range(max_iters):
+    # Every once in a while evaluate the loss on train and val sets
+    if iter % eval_interval == 0:
+        losses = estimate_loss()
+        print(f"Step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+    # Sample a batch of data
     xb, yb = get_batch('train')
 
-    # evaluate the loss
-    logits, loss = m(xb, yb)
+    # Evaluate the loss
+    logits, loss = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
-print(loss.item())
-
-print(decode(m.generate(idx=torch.zeros((1, 1), dtype=torch.long), max_new_tokens=300)[0].tolist()))
+# Generate from the model
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
