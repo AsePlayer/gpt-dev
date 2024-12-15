@@ -76,7 +76,7 @@ xb, yb = get_batch('train')
 
 '''Use the model'''
 # Create a Bigram Language Model with the vocabulary size.
-model = BigramLanguageModel(h.vocab_size)
+model = BigramLanguageModel()
 m = model.to(h.device)
 
 '''Create Optimizer'''
@@ -100,3 +100,5 @@ for iter in range(h.max_iters):
 # Generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=h.device)
 print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
+
+

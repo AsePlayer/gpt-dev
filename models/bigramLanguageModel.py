@@ -6,16 +6,18 @@ from torch.nn import functional as F
 # This makes sure that random numbers are always the same every time we run the program.
 torch.manual_seed(1337)
 
+
 # This class represents the Bigram Language Model, which learns relationships between pairs of words (bigrams).
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size):
+    def __init__(self):
         super().__init__()  # This initializes the base class (nn.Module).
         # This is like a "table" where each word (or token) is mapped to scores for the next possible words.
-        self.token_embedding_table = nn.Embedding(vocab_size, h.n_embd)
+        self.token_embedding_table = nn.Embedding(h.vocab_size, h.n_embd)
         self.position_embedding_table = nn.Embedding(h.block_size, h.n_embd)
-        self.sa_head = Head(h.n_embd)
-        self.lm_head = nn.Linear(h.n_embd, vocab_size)
+        self.sa_heads = MultiHeadAttention(4, h.n_embd//4)  # 4 heads of 8-dimensional self-attention
+        self. ffwd = FeedForward(h.n_embd)
+        self.lm_head = nn.Linear(h.n_embd, h.vocab_size)
 
     def forward(self, idx, targets=None):
         """
@@ -28,7 +30,8 @@ class BigramLanguageModel(nn.Module):
         tok_emb = self.token_embedding_table(idx)
         pos_emb = self.position_embedding_table(torch.arange(T, device=h.device))  # (T, C)
         x = tok_emb + pos_emb  # (B, T, C)
-        x = self.sa_head(x)  # apply one head of self-attention (B, T, C)
+        x = self.sa_heads(x)  # apply one head of self-attention (B, T, C)
+        x = self.ffwd(x)  # (B, T, C)
         logits = self.lm_head(x)  # Shape: (batch_size, sequence_length, vocab_size)
 
         # If we are not given any target words (to compare to), we don’t calculate the loss.
@@ -80,8 +83,8 @@ class Head(nn.Module):
         self.head_size = head_size
 
     def forward(self, x):
-        B,T,C = x.shape
-        k = self.key(x)    # (B, T, C)
+        B, T, C = x.shape
+        k = self.key(x)  # (B, T, C)
         q = self.query(x)  # (B, T, C)
 
         # Computer attention scores (affinities)
@@ -94,3 +97,28 @@ class Head(nn.Module):
         out = wei @ v  # (B, T, T) @ (B, T, C) -> (B, T, C)
         return out
 
+
+class MultiHeadAttention(nn.Module):
+    """ Multiple heads of self-attention in parallel"""
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1)
+
+
+class FeedForward(nn.Module):
+    """A simple linear layer followed by a non-linearity"""
+
+    def __init__(self, n_embd):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        return self.net(x)
