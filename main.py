@@ -1,23 +1,13 @@
 import torch
-from torch.nn import functional as F
 from models.bigramLanguageModel import BigramLanguageModel
-
-# hyperparameters
-batch_size = 32  # how many independent sequences will we process in parallel?
-block_size = 8  # what is the maximum context length for predictions?
-max_iters = 3000
-eval_interval = 300
-learning_rate = 1e-2
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-# ------------
+from data import hyperparameters as h
 
 torch.manual_seed(1337)
 
 '''Read the data'''
 # Open the file 'input.txt' and read its content into a variable called `text`.
 # This is our dataset, which we will use to train the model.
-with open('input.txt', 'r', encoding='utf-8') as f:
+with open('data/input.txt', 'r', encoding='utf-8') as f:
     text = f.read()
 
 '''Prepare the data'''
@@ -52,11 +42,11 @@ def get_batch(split):
     # Choose the data: training or validation.
     data = train_data if split == 'train' else val_data
     # Randomly pick starting points for `batch_size` sequences.
-    ix = torch.randint(len(data) - block_size, (batch_size,))
+    ix = torch.randint(len(data) - h.block_size, (h.batch_size,))
     # Create inputs (x) and targets (y) from those starting points.
-    x = torch.stack([data[i:i + block_size] for i in ix])
-    y = torch.stack([data[i + 1:i + block_size + 1] for i in ix])
-    x, y = x.to(device), y.to(device)
+    x = torch.stack([data[i:i + h.block_size] for i in ix])
+    y = torch.stack([data[i + 1:i + h.block_size + 1] for i in ix])
+    x, y = x.to(h.device), y.to(h.device)
     return x, y
 
 
@@ -65,8 +55,8 @@ def estimate_loss():
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
+        losses = torch.zeros(h.eval_iters)
+        for k in range(h.eval_iters):
             X, Y = get_batch(split)
             logits, loss = model(X, Y)
             losses[k] = loss.item()
@@ -75,20 +65,10 @@ def estimate_loss():
     return out
 
 
-# Take the first `block_size + 1` characters from the training data to show an example.
-train_data[:block_size + 1]
-
-'''Look at the training data'''
+'''Generate the training data'''
 # Take the first `block_size` characters as input (`x`) and the next `block_size` as targets (`y`).
-x = train_data[:block_size]
-y = train_data[1:block_size + 1]
-
-
-'''Batch creation'''
-# A batch is a group of examples processed at the same time. We'll create small batches.
-torch.manual_seed(1337)  # Set random seed for consistent results.
-batch_size = 4  # How many sequences we process at once.
-block_size = 8  # Maximum length of input for each sequence.
+x = train_data[:h.block_size]
+y = train_data[1:h.block_size + 1]
 
 # Generate a batch of training data.
 xb, yb = get_batch('train')
@@ -97,14 +77,14 @@ xb, yb = get_batch('train')
 '''Use the model'''
 # Create a Bigram Language Model with the vocabulary size.
 model = BigramLanguageModel(vocab_size)
-m = model.to(device)
+m = model.to(h.device)
 
 '''Create Optimizer'''
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(model.parameters(), lr=h.learning_rate)
 
-for iter in range(max_iters):
+for iter in range(h.max_iters):
     # Every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0:
+    if iter % h.eval_interval == 0:
         losses = estimate_loss()
         print(f"Step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
@@ -118,5 +98,5 @@ for iter in range(max_iters):
     optimizer.step()
 
 # Generate from the model
-context = torch.zeros((1, 1), dtype=torch.long, device=device)
+context = torch.zeros((1, 1), dtype=torch.long, device=h.device)
 print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
