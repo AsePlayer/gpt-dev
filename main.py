@@ -15,7 +15,7 @@ with open('data/input.txt', 'r', encoding='utf-8') as f:
 chars = sorted(list(set(text)))
 
 # Count how many unique characters we have in the dataset.
-vocab_size = len(chars)
+h.vocab_size = len(chars)
 
 '''Map characters to numbers'''
 # Create a mapping from characters to numbers (for example, 'a' -> 0, 'b' -> 1, etc.).
@@ -76,7 +76,7 @@ xb, yb = get_batch('train')
 
 '''Use the model'''
 # Create a Bigram Language Model with the vocabulary size.
-model = BigramLanguageModel(vocab_size)
+model = BigramLanguageModel(h.vocab_size)
 m = model.to(h.device)
 
 '''Create Optimizer'''

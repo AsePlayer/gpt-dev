@@ -14,6 +14,7 @@ class BigramLanguageModel(nn.Module):
         # This is like a "table" where each word (or token) is mapped to scores for the next possible words.
         self.token_embedding_table = nn.Embedding(vocab_size, h.n_embd)
         self.position_embedding_table = nn.Embedding(h.block_size, h.n_embd)
+        self.sa_head = Head(h.n_embd)
         self.lm_head = nn.Linear(h.n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -22,11 +23,13 @@ class BigramLanguageModel(nn.Module):
         targets: The expected next words (used to calculate how wrong the predictions are). Optional.
         """
         B, T = idx.shape
+
         # Use the input tokens to look up their "scores" for the next words in the table.
         tok_emb = self.token_embedding_table(idx)
         pos_emb = self.position_embedding_table(torch.arange(T, device=h.device))  # (T, C)
         x = tok_emb + pos_emb  # (B, T, C)
-        logits = self.lm_head(tok_emb)  # Shape: (batch_size, sequence_length, vocab_size)
+        x = self.sa_head(x)  # apply one head of self-attention (B, T, C)
+        logits = self.lm_head(x)  # Shape: (batch_size, sequence_length, vocab_size)
 
         # If we are not given any target words (to compare to), we don’t calculate the loss.
         if targets is None:
@@ -49,10 +52,12 @@ class BigramLanguageModel(nn.Module):
         max_new_tokens: The number of new words we want to generate.
         """
         for _ in range(max_new_tokens):
+            # Crop idx to the last block_size tokens
+            idx_cond = idx[:, -h.block_size:]
             # Use the model to predict the next word based on the current sequence.
-            logits, _ = self(idx)  # We only care about the logits (predicted scores).
+            logits, loss = self(idx_cond)  # We only care about the logits (predicted scores).
             # Take the scores for just the last word in the sequence.
-            logits = logits[:, -1, :]  # Shape: (batch_size, vocab_size)
+            logits = logits[:, -1, :]  # Shape: (batch_size, vocab_size), becomes (B, C)
             # Turn the scores into probabilities (e.g., "word A: 30%, word B: 70%").
             probs = F.softmax(logits, dim=-1)  # Shape: (batch_size, vocab_size)
             # Randomly pick the next word based on the probabilities.
@@ -61,3 +66,31 @@ class BigramLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)  # Shape: (batch_size, sequence_length + 1)
         # Return the full sequence (original + new words).
         return idx
+
+
+class Head(nn.Module):
+    """One head of self-attention"""
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(h.n_embd, head_size, bias=False)
+        self.query = nn.Linear(h.n_embd, head_size, bias=False)
+        self.value = nn.Linear(h.n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril((torch.ones(h.block_size, h.block_size))))
+        self.head_size = head_size
+
+    def forward(self, x):
+        B,T,C = x.shape
+        k = self.key(x)    # (B, T, C)
+        q = self.query(x)  # (B, T, C)
+
+        # Computer attention scores (affinities)
+        wei = q @ k.transpose(-2, -1) * self.head_size ** -0.5  # (B, T, C) @ (B, C, T) -> (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))  # Don't communicate with the past
+        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+
+        # Perform the weighted aggregation of the values
+        v = self.value(x)  # (B, T, C)
+        out = wei @ v  # (B, T, T) @ (B, T, C) -> (B, T, C)
+        return out
+
