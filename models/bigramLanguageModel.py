@@ -16,11 +16,7 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(h.vocab_size, h.n_embd)
         self.position_embedding_table = nn.Embedding(h.block_size, h.n_embd)
 
-        self.blocks = nn.Sequential(
-            Block(h.n_embd, n_head=4),
-            Block(h.n_embd, n_head=4),
-            Block(h.n_embd, n_head=4)
-        )
+        self.blocks = nn.Sequential(*[Block(h.n_embd, n_head=h.n_head) for _ in range(h.n_layer)])
         self.ln_f = nn.LayerNorm(h.n_embd)  # final layer norm
         self.lm_head = nn.Linear(h.n_embd, h.vocab_size)
 
@@ -88,6 +84,8 @@ class Head(nn.Module):
         self.register_buffer('tril', torch.tril((torch.ones(h.block_size, h.block_size))))
         self.head_size = head_size
 
+        self.dropout = nn.Dropout(h.dropout)
+
     def forward(self, x):
         B, T, C = x.shape
         k = self.key(x)  # (B, T, C)
@@ -97,7 +95,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * self.head_size ** -0.5  # (B, T, C) @ (B, C, T) -> (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))  # Don't communicate with the past
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
-
+        wei = self.dropout(wei)
         # Perform the weighted aggregation of the values
         v = self.value(x)  # (B, T, C)
         out = wei @ v  # (B, T, T) @ (B, T, C) -> (B, T, C)
@@ -111,10 +109,11 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(h.n_embd, h.n_embd)
+        self.dropout = nn.Dropout(h.dropout)
 
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.proj(out)
+        out = self.dropout(self.proj(out))
         return out
 
 
@@ -127,7 +126,8 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
-            nn.Linear(4 * h.n_embd, h.n_embd)  # Projection layer going back into the residual pathway
+            nn.Linear(4 * h.n_embd, h.n_embd),  # Projection layer going back into the residual pathway
+            nn.Dropout(h.dropout),
         )
 
     def forward(self, x):
@@ -143,7 +143,7 @@ class Block(nn.Module):
         head_size = n_embd // n_head
         self.sa = MultiHeadAttention(n_head, head_size)
         self.ffwd = FeedForward(n_embd)
-        # Applies layer normalization over a mini-batch of inputs 
+        # Applies layer normalization over a mini-batch of inputs
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
