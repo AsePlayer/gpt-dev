@@ -15,8 +15,13 @@ class BigramLanguageModel(nn.Module):
         # This is like a "table" where each word (or token) is mapped to scores for the next possible words.
         self.token_embedding_table = nn.Embedding(h.vocab_size, h.n_embd)
         self.position_embedding_table = nn.Embedding(h.block_size, h.n_embd)
-        self.sa_heads = MultiHeadAttention(4, h.n_embd//4)  # 4 heads of 8-dimensional self-attention
-        self. ffwd = FeedForward(h.n_embd)
+
+        self.blocks = nn.Sequential(
+            Block(h.n_embd, n_head=4),
+            Block(h.n_embd, n_head=4),
+            Block(h.n_embd, n_head=4)
+        )
+        self.ln_f = nn.LayerNorm(h.n_embd)  # final layer norm
         self.lm_head = nn.Linear(h.n_embd, h.vocab_size)
 
     def forward(self, idx, targets=None):
@@ -30,8 +35,9 @@ class BigramLanguageModel(nn.Module):
         tok_emb = self.token_embedding_table(idx)
         pos_emb = self.position_embedding_table(torch.arange(T, device=h.device))  # (T, C)
         x = tok_emb + pos_emb  # (B, T, C)
-        x = self.sa_heads(x)  # apply one head of self-attention (B, T, C)
-        x = self.ffwd(x)  # (B, T, C)
+        x = self.blocks(x)  # (B, T, C)
+        x = self.ln_f(x)  # (B,T,C)
+
         logits = self.lm_head(x)  # Shape: (batch_size, sequence_length, vocab_size)
 
         # If we are not given any target words (to compare to), we don’t calculate the loss.
@@ -104,9 +110,12 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(h.n_embd, h.n_embd)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.proj(out)
+        return out
 
 
 class FeedForward(nn.Module):
@@ -116,9 +125,27 @@ class FeedForward(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
-            nn.ReLU()
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * h.n_embd, h.n_embd)  # Projection layer going back into the residual pathway
         )
 
     def forward(self, x):
         return self.net(x)
+
+
+class Block(nn.Module):
+    """Transformer block: communication followed by computation"""
+
+    def __init__(self, n_embd, n_head):
+        # n_embd: embedding dimension, n_head: the number of heads we'd like
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embd)
+
+
+    def forward(self, x):
+        x = x + self.sa(x)
+        x = x + self.ffwd(x)
+        return x
