@@ -99,6 +99,4 @@ for iter in range(h.max_iters):
 
 # Generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=h.device)
-print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
-
-
+print(decode(m.generate(context, max_new_tokens=2000)[0].tolist()))
